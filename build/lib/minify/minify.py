@@ -26,6 +26,7 @@
 try:
   import sys
   import datetime
+  import fnmatch
   import functools
   import glob
   import logging
@@ -34,6 +35,7 @@ try:
   import optparse
   import os
   import re
+  import types
   from io import StringIO
 
   #
@@ -160,7 +162,7 @@ def logdir():
 # Okay, NOW set the variables
 
 errors = []
-__version__ = '1.0'
+__version__ = '1.2'
 __author__ = 'Josh.Lee@PyTis.com'
 __created__ = '06:14pm 17 Aug, 2024'
 __copyright__ = 'PyTis.com'
@@ -182,6 +184,24 @@ protected_options = (
 
 __change_log__ = """
 CHANGE LOG
+
+  v1.2 Major Change                                           September 13 2024
+    1. I've added the [-x/--exclude] argument and tied in logic to prevent
+    these files from being processed.  I've done this because some of my files
+    are NEVER changed by me, but are VERY large and take a bit of time to
+    process.  Example: bootstrap-icons.css
+
+    2. I realized "mini" was an alias, without the proper name, so I've created
+    bin/minify
+
+    3. I cleaned up the code / removed most commentted out code.
+
+    4. Added CREDITS.txt
+
+  v1.1 Minor Change                                           September 11 2024
+    Added a "percent' monitor that outputs the percentage complete.  I did have
+    to adjust which log.info was being used to complete this.
+    It does not work when the user utlizies  --verbose.
 
   v1.0 ORIGINAL RELEASE                                         August 17, 2024
     Original Publish.
@@ -387,7 +407,6 @@ class MyParser(optparse.OptionParser):
         pass
       sys.stdout.write("%s\n" % txt)
 
-
   def print_help(self, errors=None):
     """
     NAME
@@ -420,20 +439,7 @@ class MyParser(optparse.OptionParser):
       optparse.OptionParser.print_help(self)
 
 
-    extras = ''
     if '--help' in sys.argv and self.extra_txt is not None and errors is None:
-      """
-      try: extras = "Created: %s\n" % __created__
-      except NameError: pass
-      try: extras = "%sAuthor: %s\n" % (extras,__author__)
-      except NameError: pass
-      try: extras = "%sCopyright: %s\n" % (extras,__copyright__)
-      except NameError: pass
-      try: extras = "%sVersion: %s\n" % (extras,__version__)
-      except NameError: pass
-      if extras:
-        self.extra_txt = "\n%s\n\n%s" % (self.extra_txt, extras)
-      """
       self.print_out(self.extra_txt)
 
     if not errors:
@@ -507,10 +513,6 @@ def relogOpts(opts, msg=None, also_protect=[]):
   log.debug('-'*80) 
   return
 
-
-def is_root():
-  return bool(getpass.getuser()=='root')
-
 def set_logging(opts, name, __logdir__=__logdir__):
   global log
 
@@ -535,7 +537,7 @@ def set_logging(opts, name, __logdir__=__logdir__):
   
   if not opts.quiet and opts.version_other != True and opts.totally_verbose:
     if opts.verbose >= 2:
-      log.info2("STARTING: %s at %s" % (name, prettyNow()))
+      log.info3("STARTING: %s at %s" % (name, prettyNow()))
 
   # BEGIN TRICK
   # From here to the next comment is a trick to allow the log message to goto
@@ -546,7 +548,7 @@ def set_logging(opts, name, __logdir__=__logdir__):
   sys.stdout = buf
 
   if opts.verbose > 0 and opts.verbose < 2:
-    log.info("STARTING: %s at %s" % (name, prettyNow()))
+    log.info1("STARTING: %s at %s" % (name, prettyNow()))
 
   sys.stdout = sys.__stdout__
   del buf
@@ -565,13 +567,10 @@ def set_logging(opts, name, __logdir__=__logdir__):
     sys.stdout = sys.__stdout__
     del buf
 
-
   if opts.debug and opts.verbose:
-    log.info3("log file: %s" % log_file_path)
+    log.info4("log file: %s" % log_file_path)
 
   return log
-
-
 
 
 def filesFromPath(path, opts, cd=os.curdir):
@@ -579,7 +578,7 @@ def filesFromPath(path, opts, cd=os.curdir):
 
     files = []
 
-    log.info3('filesFromPath: %s in %s' % (path, os.path.abspath(cd)))
+    log.info4('filesFromPath: %s in %s' % (path, os.path.abspath(cd)))
 
     # Convert relative path to absolute path
     path = os.path.abspath(os.path.join(cd, path))
@@ -587,20 +586,20 @@ def filesFromPath(path, opts, cd=os.curdir):
     if os.path.isfile(path) and os.path.exists(path):
       if opts.js and path.lower().endswith('.js') or \
         opts.css and path.lower().endswith('.css'):
-        log.info2('file found in path: %s' % path)
+        log.info3('file found in path: %s' % path)
         files.append(path)
 
     elif os.path.isdir(path):
-      log.info3("folder found in args '%s', scanning now" % path)
+      log.info4("folder found in args '%s', scanning now" % path)
 
       # If it's a directory, use glob to find files
       items = []
       if opts.css:
         bag = glob.glob(os.path.join(path, '*.css'))
-        [log.info3('found %s' % b) for b in bag]
+        [log.info4('found %s' % b) for b in bag]
         items.extend(bag)
         bag = glob.glob(os.path.join(path, '*.css'))
-        [log.info3('found %s' % b) for b in bag]
+        [log.info4('found %s' % b) for b in bag]
         items.extend(bag)
 
       if opts.js: 
@@ -615,7 +614,7 @@ def filesFromPath(path, opts, cd=os.curdir):
 
     else:
       # Handle wildcards or single file pattern
-      log.info3("wildcards found in  '%s', scanning now" % path)
+      log.info4("wildcards found in  '%s', scanning now" % path)
       items = glob.glob(os.path.abspath(path))
       for item in items:
         if os.path.isfile(item) and \
@@ -636,7 +635,7 @@ def filesFromArgs(opts, args):
     """
     Process arguments to collect files, handling directories and wildcards.
     """
-    if opts.debug: log.info3('scanning input from STDIN')
+    if opts.debug: log.info4('scanning input from STDIN')
     return [f for arg in args for f in filesFromPath(arg, opts) \
       if not f.lower().endswith(('.min.css', '.min.js')) ]
 
@@ -802,64 +801,96 @@ def condense_semicolons(css):
 
 def cssmin(css):
   global log
-  log.info2('removing comments')
+  log.info3('removing comments')
   css = remove_comments(css)
-  log.info2('condensing whitespace')
+  log.info3('condensing whitespace')
   css = condense_whitespace(css)
   # A pseudo class for the Box Model Hack
   # (see http://tantek.com/CSS/Examples/boxmodelhack.html)
   css = css.replace('"\\"}\\""', "___PSEUDOCLASSBMH___")
   css = remove_unnecessary_whitespace(css)
-  log.info2('removing unnecessary semicolons')
+  log.info3('removing unnecessary semicolons')
   css = remove_unnecessary_semicolons(css)
-  log.info2('condensing zero units')
+  log.info3('condensing zero units')
   css = condense_zero_units(css)
-  log.info2('condensing multidimensional units')
+  log.info3('condensing multidimensional units')
   css = condense_multidimensional_zeros(css)
-  log.info2('condensing floating points')
+  log.info3('condensing floating points')
   css = condense_floating_points(css)
-  log.info2('normalizing rgb colors to hex')
+  log.info3('normalizing rgb colors to hex')
   css = normalize_rgb_colors_to_hex(css)
-  log.info2('condensing hex colors')
+  log.info3('condensing hex colors')
   css = condense_hex_colors(css)
   css = css.replace("___PSEUDOCLASSBMH___", '"\\"}\\""')
-  log.info2('condensing semicolons')
+  log.info3('condensing semicolons')
   css = condense_semicolons(css)
   return css.strip()
-
-
 # -----------------------------------------------------------------------------
 # End CSS PROGRAM FUNCTIONS 
 # =============================================================================
 # =============================================================================
 # Begin JS PROGRAM FUNCTIONS 
 # -----------------------------------------------------------------------------
-
 def minify_js(js_text):
     # Minify the JavaScript content
     return rjsmin.jsmin(js_text).replace("\r\n","\n").replace("\n",'')
-
 # -----------------------------------------------------------------------------
 # End JS PROGRAM FUNCTIONS 
 # =============================================================================
 
-
-
 def run(opts, args):
   """
+  To minify ALL CSS files, simply run:
+
+    mini `find . -iname '*.css'` -- passing in all file names, find will look in
+        child directories.
+    mini -rj -- this will do the same as above, find ll CSS files, recursively
+        (in all child directories)
+
   To minify ALL JS files, simply run:
-    mini `find . -iname '*.js'` -- passing in all file names
-    mini '*.js'`-- will match all in the current directory
-    mini '*.js'`-- will match all in the current directory
 
-  To minify a SPECIFIC file, run:
-    jsmin [FILENAME(s)]
+    mini `find . -iname '*.js'` -- passing in all file names, find will look in
+        child directories.
+    mini -rj -- this will do the same as above, find ll JS files, recursively
+        (in all child directories)
 
-  To minify just JS content you may utilize copy/paste or manually type:
-    jsmin 'JS to be minified as string on STDIN' """ 
+    mini '*.css'`-- will match all the CSS files in the current directory
+    mini *.css  `-- will match all the CSS files in the current directory
+    mini -c  `-- will match all in the CSS files the current directory
+
+    mini '*.js'`-- will match all the JS files in the current directory
+    mini *.js  `-- will match all in the JS files in the current directory
+    mini -j  `-- will match all in the JS files in the current directory
+
+  You may combine [-c/--css] with [-j/--js]
+
+  To minify a SPECIFIC CSS file, run:
+      mini [FILENAME(s)]
+
+  To minify a SPECIFIC JavaScript file, run:
+      mini [FILENAME(s)]
+
+
+  """ 
   global log
 
   os.nice(opts.niceness)
+
+  # first, check for excludes, and verify they are valid.
+  if opts.excludes:
+    # XXX-TODO:
+    # this can really only check full paths, it skips wildcards, and skipps
+    # files without a path, as they could match mutliple paths. so there must
+    # be a simpler way of doing it.
+    for f in opts.excludes:
+      if not os.path.isfile(f) and not os.path.isdir(f):
+        if os.path.basename(f) == f or '*' in f:
+          # th user just passed a file name in, we need to match it to each
+          # path
+          pass
+        else:
+          log.error('%s is not a valid file, or does not exist'%f)
+          return 1
 
   files = filesFromArgs(opts, args)
   if not files:
@@ -867,27 +898,59 @@ def run(opts, args):
   else:
     files = sorted(set(files))
 
-  for f in files:
+  total = len(files)
+
+  if not opts.quiet and not opts.verbose:
+    print("Please wait,..", end='', flush=True)
+
+  for i, f in enumerate(files):
+    skip = False
+    basename = os.path.basename(f)
+    abspath = os.path.abspath(f)
+    i+=1
+    percent = round(i*100/total,2)
+    if percent > 100:
+      percent = 100
+    
+    for x in opts.excludes:
+      if os.path.isdir(x): # this is a directory
+        if f.startswith(x):
+          log.info2('skipping %s found in %s' % (f, x))
+          skip = True
+          break
+
+      else: # not a directory
+        if fnmatch.fnmatch(basename, x) or fnmatch.fnmatch(abspath, x):
+          log.info1('skipping %s because of %s ' % (f, x))
+          skip = True
+          break
+
+    if skip: # we have a reason for skipping
+      log.debug('skipping')
+      continue # Skip the outer loop
+
+    if not opts.quiet and not opts.verbose:
+      print('\r%s%% complete' % percent, end='', flush=True)
+
     if f.lower().endswith('.css'):
-      log.debug('minifying\t%s' % f)
+      log.info1('minifying\t%s' % f)
       with open(f, 'r') as file:
         # Create the new filename with .min.css extension
         new_filename = os.path.splitext(f)[0] + ".min.css"
         handle = open(new_filename.replace('.min.min','.min'), 'w+')
         handle.write(cssmin(file.read()))
         handle.close()
-        log.info('wrote\t\t%s' % new_filename)
+        log.info1('wrote\t\t%s' % new_filename)
 
     elif f.lower().endswith('.js'):
-      log.debug('minifying\t%s' % f)
+      log.info1('minifying\t%s' % f)
       with open(f, 'r') as file:
         # Create the new filename with .min.js extension
         new_filename = os.path.splitext(f)[0] + ".min.js"
         handle = open(new_filename.replace('.min.min','.min'), 'w+')
         handle.write(minify_js(file.read()))
         handle.close()
-        log.info('wrote\t\t%s' % new_filename)
-
+        log.info1('wrote\t\t%s' % new_filename)
 
     else:
       print("%s is not a CSS or JS file." % f)
@@ -921,6 +984,14 @@ COPYRIGHT:
 AUTHOR:
 
   %(author)s
+
+CREATED:
+
+  %(created)s
+
+VERSION:
+
+  %(version)s
 
 HISTORY:
 
@@ -964,15 +1035,6 @@ BUGS - KNOWN ISSUES:
 
   NONE (at tis time).
 
-CREATED:
-
-  %(created)s
-
-VERSION:
-
-  %(version)s
-
-
 """  % dict(version=__version__,
              author=__author__,
              change_log=__change_log__,
@@ -1000,6 +1062,21 @@ VERSION:
       metavar='JavaScript', dest='js',
       help="JS only (when using 'minify --js *.*' skips minifying " \
       "CSS files).`$")
+    runtime.add_option("", "--javascript", action="store_true", default=False,
+      dest='js', help=optparse.SUPPRESS_HELP)
+    # ----------------------------
+    runtime.add_option(
+      '-x', '--exclude', 
+      action='append',           # Default action is 'store', stores the values
+      default=[],               # Default value if none is provided
+      dest='excludes',           # Name of the variable in the parsed arguments
+      metavar='[FILE/PATH/PATERN]',           # Placeholder for the argument in the help text
+      help="Exclude specific file, filess or paths. To pass in multiple " \
+        "simply refernce again, example: { mini --exlclude=file1.css " \
+        "--exclude=file2.css } example 2: { mini -xfile1.js -xfile2.js }. " \
+        "minify can process wildcards (*) in the exclude argument. " \
+        "EXAMPLE: mini res/css/*.css -xboot*.css -xtheme-ice.css "
+    )
     # ----------------------------
     runtime.add_option("-r", "--recursive", action="store_true", default=False,
       metavar='Recursive', dest='recursive',
@@ -1076,14 +1153,21 @@ VERSION:
       metavar='CSS', dest='css',  help='CSS files only')
     # ----------------------------
     parser.add_option("-j", "--js", action="store_true", default=False,
-      metavar='JavaScript', dest='js', help='JS files only')
+      metavar='JavaScript', dest='js', help='JS files only`$')
+    # ----------------------------
+    parser.add_option('-x', '--exclude', action='append', default=[],
+      metavar='[FILE]', dest='excludes',
+      help="Exclude specific files or paths`$" 
+    )
     # ----------------------------
     parser.add_option("-r", "--recursive", action="store_true", default=False,
-      metavar='Recursive', dest='recursive', help="Iterative by default`$")
+      metavar='Recursive', dest='recursive', help="'mini' is iterative by " \
+        "default`$")
     # ----------------------------
     parser.add_option("-N", "", type="int", action='store',
        default=default_niceness, dest='niceness', metavar='[INT <-20 to 19>]',
        help='')
+
     parser.add_option("", "--nice", type="int", action='store',
        default=default_niceness, dest='niceness', metavar='[INT <-20 to 19>]',
        help="CPU priority [INT <-20 to 19>], default %s.`$" % default_niceness)

@@ -26,6 +26,7 @@
 try:
   import sys
   import datetime
+  import fnmatch
   import functools
   import glob
   import logging
@@ -161,7 +162,7 @@ def logdir():
 # Okay, NOW set the variables
 
 errors = []
-__version__ = '1.0'
+__version__ = '1.2'
 __author__ = 'Josh.Lee@PyTis.com'
 __created__ = '06:14pm 17 Aug, 2024'
 __copyright__ = 'PyTis.com'
@@ -183,6 +184,24 @@ protected_options = (
 
 __change_log__ = """
 CHANGE LOG
+
+  v1.2 Major Change                                           September 13 2024
+    1. I've added the [-x/--exclude] argument and tied in logic to prevent
+    these files from being processed.  I've done this because some of my files
+    are NEVER changed by me, but are VERY large and take a bit of time to
+    process.  Example: bootstrap-icons.css
+
+    2. I realized "mini" was an alias, without the proper name, so I've created
+    bin/minify
+
+    3. I cleaned up the code / removed most commentted out code.
+
+    4. Added CREDITS.txt
+
+  v1.1 Minor Change                                           September 11 2024
+    Added a "percent' monitor that outputs the percentage complete.  I did have
+    to adjust which log.info was being used to complete this.
+    It does not work when the user utlizies  --verbose.
 
   v1.0 ORIGINAL RELEASE                                         August 17, 2024
     Original Publish.
@@ -388,7 +407,6 @@ class MyParser(optparse.OptionParser):
         pass
       sys.stdout.write("%s\n" % txt)
 
-
   def print_help(self, errors=None):
     """
     NAME
@@ -549,13 +567,10 @@ def set_logging(opts, name, __logdir__=__logdir__):
     sys.stdout = sys.__stdout__
     del buf
 
-
   if opts.debug and opts.verbose:
     log.info4("log file: %s" % log_file_path)
 
   return log
-
-
 
 
 def filesFromPath(path, opts, cd=os.curdir):
@@ -810,24 +825,18 @@ def cssmin(css):
   log.info3('condensing semicolons')
   css = condense_semicolons(css)
   return css.strip()
-
-
 # -----------------------------------------------------------------------------
 # End CSS PROGRAM FUNCTIONS 
 # =============================================================================
 # =============================================================================
 # Begin JS PROGRAM FUNCTIONS 
 # -----------------------------------------------------------------------------
-
 def minify_js(js_text):
     # Minify the JavaScript content
     return rjsmin.jsmin(js_text).replace("\r\n","\n").replace("\n",'')
-
 # -----------------------------------------------------------------------------
 # End JS PROGRAM FUNCTIONS 
 # =============================================================================
-
-
 
 def run(opts, args):
   """
@@ -867,6 +876,22 @@ def run(opts, args):
 
   os.nice(opts.niceness)
 
+  # first, check for excludes, and verify they are valid.
+  if opts.excludes:
+    # XXX-TODO:
+    # this can really only check full paths, it skips wildcards, and skipps
+    # files without a path, as they could match mutliple paths. so there must
+    # be a simpler way of doing it.
+    for f in opts.excludes:
+      if not os.path.isfile(f) and not os.path.isdir(f):
+        if os.path.basename(f) == f or '*' in f:
+          # th user just passed a file name in, we need to match it to each
+          # path
+          pass
+        else:
+          log.error('%s is not a valid file, or does not exist'%f)
+          return 1
+
   files = filesFromArgs(opts, args)
   if not files:
     raise NoFiles('No files found')
@@ -879,10 +904,30 @@ def run(opts, args):
     print("Please wait,..", end='', flush=True)
 
   for i, f in enumerate(files):
+    skip = False
+    basename = os.path.basename(f)
+    abspath = os.path.abspath(f)
     i+=1
     percent = round(i*100/total,2)
     if percent > 100:
       percent = 100
+    
+    for x in opts.excludes:
+      if os.path.isdir(x): # this is a directory
+        if f.startswith(x):
+          log.info2('skipping %s found in %s' % (f, x))
+          skip = True
+          break
+
+      else: # not a directory
+        if fnmatch.fnmatch(basename, x) or fnmatch.fnmatch(abspath, x):
+          log.info1('skipping %s because of %s ' % (f, x))
+          skip = True
+          break
+
+    if skip: # we have a reason for skipping
+      log.debug('skipping')
+      continue # Skip the outer loop
 
     if not opts.quiet and not opts.verbose:
       print('\r%s%% complete' % percent, end='', flush=True)
@@ -906,7 +951,6 @@ def run(opts, args):
         handle.write(minify_js(file.read()))
         handle.close()
         log.info1('wrote\t\t%s' % new_filename)
-
 
     else:
       print("%s is not a CSS or JS file." % f)
@@ -1021,6 +1065,19 @@ BUGS - KNOWN ISSUES:
     runtime.add_option("", "--javascript", action="store_true", default=False,
       dest='js', help=optparse.SUPPRESS_HELP)
     # ----------------------------
+    runtime.add_option(
+      '-x', '--exclude', 
+      action='append',           # Default action is 'store', stores the values
+      default=[],               # Default value if none is provided
+      dest='excludes',           # Name of the variable in the parsed arguments
+      metavar='[FILE/PATH/PATERN]',           # Placeholder for the argument in the help text
+      help="Exclude specific file, filess or paths. To pass in multiple " \
+        "simply refernce again, example: { mini --exlclude=file1.css " \
+        "--exclude=file2.css } example 2: { mini -xfile1.js -xfile2.js }. " \
+        "minify can process wildcards (*) in the exclude argument. " \
+        "EXAMPLE: mini res/css/*.css -xboot*.css -xtheme-ice.css "
+    )
+    # ----------------------------
     runtime.add_option("-r", "--recursive", action="store_true", default=False,
       metavar='Recursive', dest='recursive',
       help="In addtion to passing in a file or list of files, this program " \
@@ -1096,14 +1153,21 @@ BUGS - KNOWN ISSUES:
       metavar='CSS', dest='css',  help='CSS files only')
     # ----------------------------
     parser.add_option("-j", "--js", action="store_true", default=False,
-      metavar='JavaScript', dest='js', help='JS files only')
+      metavar='JavaScript', dest='js', help='JS files only`$')
+    # ----------------------------
+    parser.add_option('-x', '--exclude', action='append', default=[],
+      metavar='[FILE]', dest='excludes',
+      help="Exclude specific files or paths`$" 
+    )
     # ----------------------------
     parser.add_option("-r", "--recursive", action="store_true", default=False,
-      metavar='Recursive', dest='recursive', help="Iterative by default`$")
+      metavar='Recursive', dest='recursive', help="'mini' is iterative by " \
+        "default`$")
     # ----------------------------
     parser.add_option("-N", "", type="int", action='store',
        default=default_niceness, dest='niceness', metavar='[INT <-20 to 19>]',
        help='')
+
     parser.add_option("", "--nice", type="int", action='store',
        default=default_niceness, dest='niceness', metavar='[INT <-20 to 19>]',
        help="CPU priority [INT <-20 to 19>], default %s.`$" % default_niceness)

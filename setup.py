@@ -35,6 +35,7 @@ setup(
     ],
     scripts=[
 			os.path.abspath(os.path.join(__curdir__, 'bin/mini')),
+			os.path.abspath(os.path.join(__curdir__, 'bin/minify')),
     ],
 #    entry_points={
 #        'console_scripts': [
