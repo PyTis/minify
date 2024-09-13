@@ -1,24 +1,30 @@
 
 MINIFY is a unity of 2 scripts, with my option parser, logging, and file
 handling code.
-
+  =================================================
+  Author: Josh Lee
+  Josh.Lee@FranklinTempleton.com
+  Pytis.com
+  =================================================
 
 I have pulled code from a script called CSSMIN to perform the CSS minification.
 
   `cssmin` - A Python port of the YUI CSS compressor.
-
+  
   This was taken from:
+  =================================================
     http://github.com/zacharyvoase/cssmin
 
       version          = '0.2.0',
       author           = "Zachary Voase",
       author_email     = "zacharyvoase@me.com",
       description      = "A Python port of the YUI CSS compression algorithm."
-
+  =================================================
 This program also utilizes rjsmin, however this module needs to be installed
 (for now).
-
-rjsmin was created by André Malo and can be found here:
-
-https://github.com/ndparker/rjsmin/tree/master
-https://github.com/ndparker/rjsmin/blob/master/README.md
+  =================================================
+    rjsmin was created by André Malo and can be found here:
+    
+    https://github.com/ndparker/rjsmin/tree/master
+    https://github.com/ndparker/rjsmin/blob/master/README.md
+  =================================================
