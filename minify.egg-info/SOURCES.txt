@@ -1,0 +1,9 @@
+setup.py
+/home/recdb/github/minify/bin/mini
+minify/__init__.py
+minify/minify.py
+minify.egg-info/PKG-INFO
+minify.egg-info/SOURCES.txt
+minify.egg-info/dependency_links.txt
+minify.egg-info/requires.txt
+minify.egg-info/top_level.txt
